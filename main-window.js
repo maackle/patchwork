@@ -90,6 +90,74 @@ module.exports = function (config) {
     })
   )
 
+  const newWin = () => {
+    var Path = require('path')
+    var extend = require('xtend/mutable')
+    var ssbKeys = require('ssb-keys')
+    const path = Path.join(__dirname, 'server-process.js')
+    const appName = 'ssb'
+    const opts = {}
+    const config = require('ssb-config/inject')(appName, extend({
+      port: 8008,
+      blobsPort: 7777,
+      friends: {
+        dunbar: 150,
+        hops: 2 // down from 3
+      }
+    }, opts))
+
+    config.keys = ssbKeys.loadOrCreateSync(Path.join(config.path, 'secret'))
+
+    // fix offline on windows by specifying 127.0.0.1 instead of localhost (default)
+    var id = config.keys.id
+    config.remote = `net:127.0.0.1:${config.port}~shs:${id.slice(1).replace('.ed25519', '')}`
+
+    const win = new electron.remote.BrowserWindow({width: 800, height: 800})
+    win.loadURL('/public')
+
+    win.webContents.on('dom-ready', function () {
+      win.webContents.executeJavaScript(`
+        var electron = require('electron')
+        var rootView = require(${JSON.stringify(path)})
+        var h = require('mutant/h')
+
+        electron.webFrame.setZoomLevelLimits(1, 1)
+
+        var config = ${JSON.stringify(config)}
+        var data = ${JSON.stringify(opts.data)}
+        var title = ${JSON.stringify(opts.title || 'Patchwork')}
+
+        document.documentElement.querySelector('head').appendChild(
+          h('title', title)
+        )
+
+        var shouldShow = ${opts.show !== false}
+        var shouldConnect = ${opts.connect !== false}
+
+        document.documentElement.replaceChild(h('body', [
+          rootView(config, data)
+        ]), document.body)
+      `)
+    })
+
+    // setTimeout(function () {
+    //   win.show()
+    // }, 3000)
+
+    win.webContents.on('will-navigate', function (e, url) {
+      e.preventDefault()
+      electron.shell.openExternal(url)
+    })
+
+    win.webContents.on('new-window', function (e, url) {
+      e.preventDefault()
+      electron.shell.openExternal(url)
+    })
+
+    win.loadURL('file://' + Path.join(__dirname, '..', 'assets', 'base.html'))
+    return win
+  }
+
   var container = h(`MainWindow -${process.platform}`, [
     h('div.top', [
       h('span.history', [
@@ -105,6 +173,10 @@ module.exports = function (config) {
       h('span.nav', [
         tab(i18n('Public'), '/public'),
         tab(i18n('Private'), '/private'),
+        h('a', {
+          href: '#',
+          'ev-click': newWin
+        }, 'Window test'),
         dropTab(i18n('More'), [
           getSubscribedChannelMenu,
           [i18n('Gatherings'), '/gatherings'],
